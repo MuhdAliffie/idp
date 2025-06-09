@@ -1,0 +1,38 @@
+{
+    "mission_name": "Perimeter Security Patrol",
+    "mission_type": "patrol",
+    "description": "Continuous perimeter monitoring for security",
+    "parameters": {
+        "altitude": 100,
+        "loops": 10,
+        "patrol_delay": 15
+    },
+    "perimeter_points": [
+        {
+            "lat": 40.1234567,
+            "lon": -74.1234567,
+            "alt": 100
+        },
+        {
+            "lat": 40.1244567,
+            "lon": -74.1234567,
+            "alt": 100
+        },
+        {
+            "lat": 40.1244567,
+            "lon": -74.1244567,
+            "alt": 100
+        },
+        {
+            "lat": 40.1234567,
+            "lon": -74.1244567,
+            "alt": 100
+        }
+    ],
+    "detection_targets": [
+        "person",
+        "vehicle",
+        "bicycle"
+    ],
+    "alert_threshold": 0.7
+}

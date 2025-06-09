@@ -1,0 +1,56 @@
+{
+    "mission_name": "Agricultural Field Survey",
+    "mission_type": "survey",
+    "description": "Systematic survey of agricultural field for crop monitoring",
+    "parameters": {
+        "start_lat": 40.1234567,
+        "start_lon": -74.1234567,
+        "width": 200,
+        "height": 300,
+        "altitude": 120,
+        "spacing": 25,
+        "overlap": 80
+    },
+    "waypoints": [
+        {
+            "lat": 40.1234567,
+            "lon": -74.1234567,
+            "alt": 120,
+            "action": "takeoff",
+            "speed": 5.0,
+            "delay": 3
+        },
+        {
+            "lat": 40.1244567,
+            "lon": -74.1234567,
+            "alt": 120,
+            "action": "waypoint",
+            "speed": 8.0,
+            "delay": 2
+        },
+        {
+            "lat": 40.1244567,
+            "lon": -74.1254567,
+            "alt": 120,
+            "action": "waypoint",
+            "speed": 8.0,
+            "delay": 2
+        },
+        {
+            "lat": 40.1254567,
+            "lon": -74.1254567,
+            "alt": 120,
+            "action": "waypoint",
+            "speed": 8.0,
+            "delay": 2
+        },
+        {
+            "lat": 40.1234567,
+            "lon": -74.1234567,
+            "alt": 100,
+            "action": "land",
+            "speed": 2.0,
+            "delay": 0
+        }
+    ]
+}

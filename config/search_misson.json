@@ -1,0 +1,30 @@
+{
+    "mission_name": "Search and Rescue Operation",
+    "mission_type": "search",
+    "description": "Spiral search pattern for missing person",
+    "parameters": {
+        "center_lat": 40.1234567,
+        "center_lon": -74.1234567,
+        "search_radius": 300,
+        "altitude": 80,
+        "pattern": "spiral",
+        "search_delay": 10
+    },
+    "search_targets": [
+        "person",
+        "clothing",
+        "debris"
+    ],
+    "high_priority_areas": [
+        {
+            "lat": 40.1240000,
+            "lon": -74.1240000,
+            "radius": 50
+        },
+        {
+            "lat": 40.1230000,
+            "lon": -74.1230000,
+            "radius": 30
+        }
+    ]
+}

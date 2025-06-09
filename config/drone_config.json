@@ -1,0 +1,39 @@
+{
+    "system_name": "Autonomous Survey Drone",
+    "geofence": {
+        "center_lat": 40.1234567,
+        "center_lon": -74.1234567,
+        "radius": 500,
+        "max_altitude": 150
+    },
+    "battery": {
+        "min_battery_voltage": 14.0,
+        "critical_battery_voltage": 13.5,
+        "landing_voltage": 13.0
+    },
+    "flight_parameters": {
+        "max_flight_time": 1800,
+        "cruise_speed": 8.0,
+        "climb_rate": 3.0,
+        "descent_rate": 2.0,
+        "waypoint_radius": 2.0
+    },
+    "safety": {
+        "max_wind_speed": 15,
+        "max_rain_intensity": 0,
+        "emergency_landing_enabled": true,
+        "rtl_altitude": 120
+    },
+    "camera": {
+        "camera_index": 0,
+        "resolution_width": 640,
+        "resolution_height": 480,
+        "fps": 30
+    },
+    "detection": {
+        "model_path": "yolov8n.pt",
+        "confidence_threshold": 0.5,
+        "min_obstacle_area": 5000,
+        "detection_rate": 10
+    }
+}
