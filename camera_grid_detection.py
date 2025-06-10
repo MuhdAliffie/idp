@@ -7,6 +7,10 @@ import math
 from datetime import datetime
 from ultralytics import YOLO
 import logging
+import RPi.GPIO as GPIO
+import threading
+import statistics
+from collections import deque
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -249,96 +253,240 @@ class CameraGridSystem:
         
         return frame_with_objects
 
-class EnhancedObstacleDetector:
+class EnhancedObstacleDetectorWithDistance:
     """Enhanced obstacle detector with grid-based analysis"""
     
-    def __init__(self, model_path='yolov8n.pt', confidence_threshold=0.5, frame_width=640, frame_height=480):
+    def __init__(self, model_path='yolov8n.pt', confidence_threshold=0.5, frame_width=640, frame_height=480, trig_pin=18, echo_pin=24):
+        super().__init__(model_path, confidence_threshold, frame_width, frame_height)
+        
         self.model = YOLO(model_path)
         self.confidence_threshold = confidence_threshold
+        
+        # Initialize ultrasonic sensor
+        self.ultrasonic = UltrasonicSensor(trig_pin, echo_pin)
+        self.ultrasonic.start_continuous_measurement()
         
         # Initialize grid system
         self.grid_system = CameraGridSystem(frame_width, frame_height)
         
         # Obstacle classes to detect
-        self.obstacle_classes = [
-            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
-            'truck', 'boat', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
-            'elephant', 'bear', 'zebra', 'giraffe', 'bottle', 'chair', 'couch',
-            'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
-            'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
-            'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
-            'teddy bear', 'hair drier', 'toothbrush'
-        ]
+        self.obstacle_classes = list(self.model.names.values())
+        self.ultrasonic = UltrasonicSensor(trig_pin, echo_pin)
+        self.ultrasonic.start_continuous_measurement()
+        
+        # Distance correlation parameters
+        self.camera_fov_horizontal = 62.2  # degrees (typical for Pi camera)
+        self.center_detection_threshold = 0.3  # 30% of frame width from center
         
         # Avoidance parameters
         self.consecutive_danger_detections = 0
         self.danger_threshold = 3  # Number of consecutive detections before action
         self.avoidance_active = False
-        
-    def detect_obstacles(self, frame):
-        """Detect obstacles in frame using YOLO"""
-        results = self.model(frame, conf=self.confidence_threshold, verbose=False)
-        obstacles = []
-        
-        if results[0].boxes is not None:
-            for box in results[0].boxes:
-                class_id = int(box.cls[0])
-                class_name = self.model.names[class_id]
-                
-                if class_name in self.obstacle_classes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    confidence = box.conf[0].cpu().numpy()
-                    
-                    center_x = (x1 + x2) / 2
-                    center_y = (y1 + y2) / 2
-                    
-                    obstacle_info = {
-                        'class': class_name,
-                        'confidence': confidence,
-                        'bbox': [x1, y1, x2, y2],
-                        'center': [center_x, center_y],
-                        'area': (x2 - x1) * (y2 - y1)
-                    }
-                    obstacles.append(obstacle_info)
-        
-        return obstacles
     
-    def analyze_frame_with_grid(self, frame):
-        """Analyze frame with grid system for danger detection"""
-        # Detect objects
+    def correlate_distance_with_objects(self, objects, ultrasonic_distance):
+        """Correlate ultrasonic distance with detected objects"""
+        if not objects or ultrasonic_distance is None:
+            return objects
+        
+        frame_center_x = self.grid_system.frame_width / 2
+        center_tolerance = self.grid_system.frame_width * self.center_detection_threshold
+        
+        # Find objects near the center of the frame (where ultrasonic sensor points)
+        center_objects = []
+        for obj in objects:
+            obj_center_x = obj['center'][0]
+            distance_from_center = abs(obj_center_x - frame_center_x)
+            
+            if distance_from_center <= center_tolerance:
+                center_objects.append({
+                    'object': obj,
+                    'distance_from_center': distance_from_center
+                })
+        
+        # Assign ultrasonic distance to the most centered object
+        if center_objects:
+            # Sort by distance from center and assign to closest
+            center_objects.sort(key=lambda x: x['distance_from_center'])
+            closest_obj = center_objects[0]['object']
+            closest_obj['ultrasonic_distance'] = ultrasonic_distance
+            closest_obj['distance_source'] = 'ultrasonic'
+            
+            # Estimate distances for other objects based on relative size
+            self.estimate_relative_distances(objects, closest_obj, ultrasonic_distance)
+        
+        return objects
+    
+    def estimate_relative_distances(self, objects, reference_obj, reference_distance):
+        """Estimate distances for other objects based on reference object"""
+        reference_area = reference_obj['area']
+        
+        for obj in objects:
+            if obj == reference_obj:
+                continue
+                
+            # Simple inverse square law approximation
+            area_ratio = reference_area / obj['area']
+            estimated_distance = reference_distance * (area_ratio ** 0.5)
+            
+            # Clamp to reasonable range
+            estimated_distance = max(10, min(estimated_distance, 500))  # 10cm to 5m
+            
+            obj['estimated_distance'] = estimated_distance
+            obj['distance_source'] = 'estimated'
+    
+    def analyze_frame_with_distance(self, frame):
+        """Enhanced frame analysis with distance measurement"""
+        # Get current ultrasonic distance
+        ultrasonic_distance = self.ultrasonic.get_current_distance()
+        
+        # Perform standard object detection
         objects = self.detect_obstacles(frame)
         
-        # Update grid with detected objects
-        objects_in_danger = self.grid_system.update_grid_with_objects(objects)
+        # Correlate distance with objects
+        objects_with_distance = self.correlate_distance_with_objects(objects, ultrasonic_distance)
         
-        # Analyze danger situation
+        # Update grid with distance-enhanced objects
+        objects_in_danger = self.grid_system.update_grid_with_objects(objects_with_distance)
+        
+        # Enhanced danger analysis with distance
         danger_analysis = None
         if objects_in_danger:
-            self.consecutive_danger_detections += 1
+            danger_analysis = self.analyze_danger_with_distance(objects_in_danger)
             
+            self.consecutive_danger_detections += 1
             if self.consecutive_danger_detections >= self.danger_threshold:
-                danger_analysis = self.grid_system.find_safe_direction(objects_in_danger)
-                danger_analysis['objects_in_danger'] = objects_in_danger
-                
-                logger.warning(f"DANGER DETECTED: {len(objects_in_danger)} objects in danger zones")
+                logger.warning(f"DANGER WITH DISTANCE: {len(objects_in_danger)} objects")
                 for obj_info in objects_in_danger:
                     obj = obj_info['object']
                     pos = obj_info['grid_pos']
-                    logger.warning(f"  - {obj['class']} at grid position ({pos[0]},{pos[1]})")
+                    distance_info = ""
+                    if 'ultrasonic_distance' in obj:
+                        distance_info = f" (Distance: {obj['ultrasonic_distance']:.1f}cm - Ultrasonic)"
+                    elif 'estimated_distance' in obj:
+                        distance_info = f" (Distance: ~{obj['estimated_distance']:.1f}cm - Estimated)"
+                    
+                    logger.warning(f"  - {obj['class']} at ({pos[0]},{pos[1]}){distance_info}")
         else:
             self.consecutive_danger_detections = 0
         
-        # Create visualization
+        # Create enhanced visualization
         frame_with_grid = self.grid_system.draw_grid(frame)
-        frame_with_objects = self.grid_system.draw_objects_on_grid(frame_with_grid, objects)
+        frame_with_objects = self.draw_objects_with_distance(frame_with_grid, objects_with_distance)
+        
+        # Add ultrasonic distance display
+        if ultrasonic_distance:
+            cv2.putText(frame_with_objects, f"Ultrasonic: {ultrasonic_distance:.1f}cm", 
+                       (10, frame_with_objects.shape[0] - 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
         return {
             'frame': frame_with_objects,
-            'objects': objects,
+            'objects': objects_with_distance,
             'objects_in_danger': objects_in_danger,
             'danger_analysis': danger_analysis,
-            'grid_state': self.grid_system.grid_state.copy()
+            'grid_state': self.grid_system.grid_state.copy(),
+            'ultrasonic_distance': ultrasonic_distance
         }
+    
+    def analyze_danger_with_distance(self, objects_in_danger):
+        """Enhanced danger analysis considering distance"""
+        # Get base analysis
+        base_analysis = self.grid_system.find_safe_direction(objects_in_danger)
+        
+        # Enhance with distance information
+        immediate_threats = []  # Objects closer than 50cm
+        moderate_threats = []   # Objects 50-150cm
+        distant_objects = []    # Objects > 150cm
+        
+        for obj_info in objects_in_danger:
+            obj = obj_info['object']
+            distance = None
+            
+            if 'ultrasonic_distance' in obj:
+                distance = obj['ultrasonic_distance']
+            elif 'estimated_distance' in obj:
+                distance = obj['estimated_distance']
+            
+            if distance:
+                if distance < 50:
+                    immediate_threats.append(obj_info)
+                elif distance < 150:
+                    moderate_threats.append(obj_info)
+                else:
+                    distant_objects.append(obj_info)
+        
+        # Enhanced analysis with distance categories
+        base_analysis.update({
+            'immediate_threats': immediate_threats,
+            'moderate_threats': moderate_threats,
+            'distant_objects': distant_objects,
+            'threat_level': self.calculate_threat_level(immediate_threats, moderate_threats)
+        })
+        
+        return base_analysis
+    
+    def calculate_threat_level(self, immediate_threats, moderate_threats):
+        """Calculate overall threat level based on distance"""
+        if len(immediate_threats) > 0:
+            return "CRITICAL"
+        elif len(moderate_threats) > 2:
+            return "HIGH"
+        elif len(moderate_threats) > 0:
+            return "MODERATE"
+        else:
+            return "LOW"
+    
+    def draw_objects_with_distance(self, frame, objects):
+        """Draw objects with distance information"""
+        frame_with_objects = frame.copy()
+        
+        for i, obj in enumerate(objects):
+            # Draw bounding box
+            x1, y1, x2, y2 = obj['bbox']
+            
+            # Color based on distance
+            if 'ultrasonic_distance' in obj and obj['ultrasonic_distance'] < 50:
+                box_color = (0, 0, 255)  # Red for close objects
+            elif 'estimated_distance' in obj and obj['estimated_distance'] < 100:
+                box_color = (0, 165, 255)  # Orange for moderate distance
+            else:
+                box_color = (0, 255, 0)  # Green for far objects
+            
+            cv2.rectangle(frame_with_objects, (int(x1), int(y1)), (int(x2), int(y2)), 
+                         box_color, 2)
+            
+            # Draw object center
+            center_x, center_y = obj['center']
+            cv2.circle(frame_with_objects, (int(center_x), int(center_y)), 5, 
+                      box_color, -1)
+            
+            # Enhanced label with distance
+            row, col = self.grid_system.get_grid_cell(center_x, center_y)
+            label = f"{obj['class']} ({row},{col})"
+            
+            # Add distance information
+            if 'ultrasonic_distance' in obj:
+                label += f" {obj['ultrasonic_distance']:.1f}cm"
+            elif 'estimated_distance' in obj:
+                label += f" ~{obj['estimated_distance']:.1f}cm"
+            
+            # Add zone information
+            if self.grid_system.is_danger_zone(row, col):
+                label += " [DANGER]"
+                text_color = (0, 0, 255)
+            else:
+                label += " [SAFE]"
+                text_color = (0, 255, 0)
+            
+            cv2.putText(frame_with_objects, label, (int(x1), int(y1-10)), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1)
+        
+        return frame_with_objects
+    
+    def cleanup(self):
+        """Cleanup resources"""
+        if hasattr(self, 'ultrasonic'):
+            self.ultrasonic.stop_continuous_measurement()
 
 class GridBasedDroneController:
     """Drone controller with grid-based obstacle avoidance"""
@@ -514,9 +662,9 @@ class GridDetectionDemo:
 class EnhancedAutonomousDroneSystem:
     """Enhanced autonomous drone system with grid-based detection"""
     
-    def __init__(self, camera_index=0, model_path='yolov8n.pt'):
+    def __init__(self, camera_index=0, model_path='yolov8n.pt', trip_pin =18, echo_pin=24):
         # Initialize components (assume flight_controller exists)
-        self.enhanced_detector = EnhancedObstacleDetector(model_path)
+        self.enhanced_detector = EnhancedObstacleDetectorWithDistance(model_path)
         
         # Camera setup
         self.camera = cv2.VideoCapture(camera_index)
@@ -651,25 +799,122 @@ class EnhancedAutonomousDroneSystem:
             self.camera.release()
         cv2.destroyAllWindows()
 
+class UltrasonicSensor:
+    """Ultrasonic sensor for distance measurement"""
+    
+    def __init__(self, trig_pin=18, echo_pin=24, max_distance=400):
+        self.trig_pin = trig_pin
+        self.echo_pin = echo_pin
+        self.max_distance = max_distance  # cm
+        
+        # Setup GPIO
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.trig_pin, GPIO.OUT)
+        GPIO.setup(self.echo_pin, GPIO.IN)
+        
+        # Distance smoothing
+        self.distance_buffer = deque(maxlen=5)  # Rolling average of 5 readings
+        self.last_valid_distance = None
+        
+        # Measurement thread
+        self.running = False
+        self.measurement_thread = None
+        self.current_distance = None
+        self.distance_lock = threading.Lock()
+        
+    def start_continuous_measurement(self):
+        """Start continuous distance measurement in background thread"""
+        self.running = True
+        self.measurement_thread = threading.Thread(target=self._measurement_loop)
+        self.measurement_thread.daemon = True
+        self.measurement_thread.start()
+        
+    def stop_continuous_measurement(self):
+        """Stop continuous measurement"""
+        self.running = False
+        if self.measurement_thread:
+            self.measurement_thread.join()
+        GPIO.cleanup()
+        
+    def _measurement_loop(self):
+        """Continuous measurement loop"""
+        while self.running:
+            try:
+                distance = self.measure_distance()
+                if distance is not None:
+                    with self.distance_lock:
+                        self.current_distance = distance
+                time.sleep(0.1)  # 10Hz measurement rate
+            except Exception as e:
+                print(f"Ultrasonic measurement error: {e}")
+                time.sleep(0.5)
+    
+    def measure_distance(self):
+        """Measure distance using ultrasonic sensor"""
+        try:
+            # Clear trigger
+            GPIO.output(self.trig_pin, False)
+            time.sleep(0.00001)  # 10µs
+            
+            # Send trigger pulse
+            GPIO.output(self.trig_pin, True)
+            time.sleep(0.00001)  # 10µs
+            GPIO.output(self.trig_pin, False)
+            
+            # Wait for echo start
+            timeout = time.time() + 0.1  # 100ms timeout
+            while GPIO.input(self.echo_pin) == 0:
+                pulse_start = time.time()
+                if pulse_start > timeout:
+                    return None
+            
+            # Wait for echo end
+            timeout = time.time() + 0.1
+            while GPIO.input(self.echo_pin) == 1:
+                pulse_end = time.time()
+                if pulse_end > timeout:
+                    return None
+            
+            # Calculate distance
+            pulse_duration = pulse_end - pulse_start
+            distance = (pulse_duration * 34300) / 2  # Speed of sound = 343 m/s
+            
+            # Validate reading
+            if 2 <= distance <= self.max_distance:
+                self.distance_buffer.append(distance)
+                
+                # Return smoothed distance
+                if len(self.distance_buffer) >= 3:
+                    # Remove outliers and average
+                    sorted_distances = sorted(list(self.distance_buffer))
+                    # Use median of middle values for noise reduction
+                    middle_values = sorted_distances[1:-1] if len(sorted_distances) > 2 else sorted_distances
+                    smoothed_distance = statistics.mean(middle_values)
+                    self.last_valid_distance = smoothed_distance
+                    return smoothed_distance
+                else:
+                    return distance
+            
+            return self.last_valid_distance  # Return last valid reading if current is invalid
+            
+        except Exception as e:
+            print(f"Distance measurement error: {e}")
+            return self.last_valid_distance
+    
+    def get_current_distance(self):
+        """Get current distance (thread-safe)"""
+        with self.distance_lock:
+            return self.current_distance
+
 if __name__ == "__main__":
-    # Demo of enhanced system
-    print("Enhanced Grid-Based Drone Detection System")
-    print("==========================================")
+    # Test ultrasonic sensor
+    sensor = UltrasonicSensor(trig_pin=18, echo_pin=24)
+    sensor.start_continuous_measurement()
     
-    # Option 1: Run basic grid detection demo
-    print("1. Basic Grid Detection Demo")
-    demo = GridDetectionDemo()
-    demo.run_demo()
-    
-    # Option 2: Run enhanced system demo (uncomment to use)
-    # print("2. Enhanced Autonomous System Demo")
-    # enhanced_system = EnhancedAutonomousDroneSystem()
-    # enhanced_system.start_enhanced_detection()
-    # 
-    # try:
-    #     while True:
-    #         time.sleep(5)
-    #         stats = enhanced_system.get_detection_stats()
-    #         print(f"Detection Stats: {stats}")
-    # except KeyboardInterrupt:
-    #     enhanced_system.stop_enhanced_detection()
+    try:
+        for i in range(10):
+            distance = sensor.get_current_distance()
+            print(f"Distance: {distance}cm" if distance else "No reading")
+            time.sleep(1)
+    finally:
+        sensor.stop_continuous_measurement()
