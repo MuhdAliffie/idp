@@ -35,7 +35,14 @@ import math
 import serial
 import struct
 from ultralytics import YOLO
-import RPi.GPIO as GPIO
+# For Raspberry Pi 5 compatibility, use one of these:
+# Option 1: gpiozero (Recommended)
+from gpiozero import DistanceSensor, Device
+from gpiozero.pins.lgpio import LGPIOFactory
+# Option 2: rpi-lgpio (drop-in replacement)
+# import rpi_lgpio.GPIO as GPIO
+# Option 3: lgpio directly
+# import lgpio
 from pymavlink import mavutil
 from enum import Enum
 
