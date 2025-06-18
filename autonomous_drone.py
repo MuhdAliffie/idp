@@ -600,6 +600,12 @@ class AutonomousDrone:
         # Camera
         self.camera = None
         
+        # IR camera correction parameters
+        self.ir_correction_enabled = True
+        self.red_gain = 0.7    # Reduce red channel to fix purple tint
+        self.green_gain = 0.9  # Slightly reduce green
+        self.blue_gain = 1.2   # Boost blue channel
+        
         # Avoidance state
         self.avoidance_direction = None
         self.avoidance_distance = 0
@@ -620,9 +626,26 @@ class AutonomousDrone:
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.camera.set(cv2.CAP_PROP_FPS, 30)
             
+            # IR Camera color correction settings
+            # Disable auto white balance for manual control
+            self.camera.set(cv2.CAP_PROP_AUTO_WB, 0)
+            
+            # Set manual white balance (adjust these for your IR camera)
+            # Some cameras may not support these properties
+            try:
+                self.camera.set(cv2.CAP_PROP_WB_TEMPERATURE, 4000)
+            except:
+                pass
+            
             if not self.camera.isOpened():
                 logger.error("Failed to open camera")
                 return False
+            
+            # Color correction parameters for IR camera
+            self.ir_correction_enabled = True
+            self.red_gain = 0.7    # Reduce red channel to fix purple tint
+            self.green_gain = 0.9  # Slightly reduce green
+            self.blue_gain = 1.2   # Boost blue channel
             
             # Initialize grid zone types
             self.grid_manager.update_zone_types()
@@ -677,6 +700,33 @@ class AutonomousDrone:
         
         return bearing
     
+    def correct_ir_tint(self, frame: np.ndarray) -> np.ndarray:
+        """Correct purple/pink tint from IR camera"""
+        if not self.ir_correction_enabled:
+            return frame
+            
+        # Apply channel gains to reduce purple tint
+        corrected = frame.astype(np.float32)
+        corrected[:, :, 2] *= self.red_gain    # Red channel (BGR format)
+        corrected[:, :, 1] *= self.green_gain  # Green channel
+        corrected[:, :, 0] *= self.blue_gain   # Blue channel
+        
+        # Additional HSV-based purple reduction
+        corrected_uint8 = np.clip(corrected, 0, 255).astype(np.uint8)
+        hsv = cv2.cvtColor(corrected_uint8, cv2.COLOR_BGR2HSV).astype(np.float32)
+        
+        # Target purple/magenta hues (130-170 in OpenCV's 0-179 scale)
+        purple_mask = ((hsv[:, :, 0] >= 130) & (hsv[:, :, 0] <= 170)).astype(np.float32)
+        
+        # Reduce saturation of purple areas by 60%
+        hsv[:, :, 1] = hsv[:, :, 1] * (1 - 0.6 * purple_mask)
+        
+        # Convert back to BGR
+        hsv_uint8 = np.clip(hsv, 0, [179, 255, 255]).astype(np.uint8)
+        final = cv2.cvtColor(hsv_uint8, cv2.COLOR_HSV2BGR)
+        
+        return final
+    
     def detect_obstacles(self) -> Tuple[List[ObstacleInfo], np.ndarray]:
         """Detect obstacles using vision and ultrasonic sensors, return obstacles and processed frame"""
         obstacles = []
@@ -686,6 +736,9 @@ class AutonomousDrone:
         if self.camera and self.camera.isOpened():
             ret, frame = self.camera.read()
             if ret:
+                # Apply IR camera color correction
+                frame = self.correct_ir_tint(frame)
+                
                 vision_obstacles = self.vision_detector.detect_obstacles(frame, self.grid_manager)
                 obstacles.extend(vision_obstacles)
                 
