@@ -7,6 +7,20 @@ Autonomous Drone with Grid-Based Obstacle Detection and Avoidance System
 - YOLOv8n for computer vision obstacle detection
 - Ultrasonic sensor for proximity detection
 - SpeedyBee F405 flight controller communication
+
+RASPBERRY PI 5 INSTALLATION:
+---------------------------
+# Install required GPIO libraries for Pi 5:
+sudo apt update
+sudo apt install python3-lgpio python3-gpiozero
+pip3 install gpiozero lgpio
+
+# Install other dependencies:
+pip3 install opencv-python ultralytics pymavlink numpy
+
+# If you prefer RPi.GPIO compatibility:
+pip3 install rpi-lgpio
+# Then replace the gpiozero imports with: import rpi_lgpio.GPIO as GPIO
 """
 
 import cv2
@@ -268,49 +282,41 @@ class GridZoneManager:
         return result
 
 class UltrasonicSensor:
-    """Ultrasonic sensor interface for HC-SR04"""
+    """Ultrasonic sensor interface for HC-SR04 - Raspberry Pi 5 compatible"""
     
     def __init__(self, trigger_pin: int, echo_pin: int, max_distance: float = 4.0):
         self.trigger_pin = trigger_pin
         self.echo_pin = echo_pin
         self.max_distance = max_distance
         
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(trigger_pin, GPIO.OUT)
-        GPIO.setup(echo_pin, GPIO.IN)
-        GPIO.output(trigger_pin, False)
+        # Initialize the distance sensor using gpiozero (Pi 5 compatible)
+        self.sensor = DistanceSensor(
+            echo=echo_pin, 
+            trigger=trigger_pin,
+            max_distance=max_distance,
+            threshold_distance=0.1
+        )
+        
+        logger.info(f"Ultrasonic sensor initialized on pins trigger={trigger_pin}, echo={echo_pin}")
         
     def get_distance(self) -> float:
         """Get distance measurement in meters"""
         try:
-            # Send trigger pulse
-            GPIO.output(self.trigger_pin, True)
-            time.sleep(0.00001)  # 10µs pulse
-            GPIO.output(self.trigger_pin, False)
+            # gpiozero returns distance in meters
+            distance = self.sensor.distance
             
-            # Measure echo time
-            start_time = time.time()
-            timeout = start_time + 0.1  # 100ms timeout
-            
-            while GPIO.input(self.echo_pin) == 0:
-                pulse_start = time.time()
-                if pulse_start > timeout:
-                    return self.max_distance
-                    
-            while GPIO.input(self.echo_pin) == 1:
-                pulse_end = time.time()
-                if pulse_end > timeout:
-                    return self.max_distance
-                    
-            # Calculate distance (speed of sound = 343 m/s)
-            pulse_duration = pulse_end - pulse_start
-            distance = pulse_duration * 343 / 2
-            
+            if distance is None:
+                return self.max_distance
+                
             return min(distance, self.max_distance)
             
         except Exception as e:
             logger.error(f"Ultrasonic sensor error: {e}")
             return self.max_distance
+    
+    def cleanup(self):
+        """Clean up sensor resources"""
+        self.sensor.close()
 
 class VisionDetector:
     """YOLOv8n-based obstacle detection with grid mapping"""
@@ -952,7 +958,9 @@ class AutonomousDrone:
             self.video_writer.release()
         
         cv2.destroyAllWindows()
-        GPIO.cleanup()
+        
+        # Clean up ultrasonic sensor
+        self.ultrasonic_sensor.cleanup()
         
         logger.info("Cleanup completed")
 
