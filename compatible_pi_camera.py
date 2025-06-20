@@ -254,10 +254,10 @@ class CompatiblePiGridDemo:
     """Grid detection demo with universal camera compatibility"""
     
     def __init__(self, width=640, height=480):
-        from camera_grid_detection import EnhancedObstacleDetector
+        from camera_grid_detection import EnhancedObstacleDetectorWithDistance
         
         self.camera = UniversalPiCamera(width, height)
-        self.detector = EnhancedObstacleDetector(
+        self.detector = EnhancedObstacleDetectorWithDistance(
             model_path='yolov8n.pt',
             confidence_threshold=0.5,
             frame_width=width,

@@ -1,0 +1,10 @@
+DRONE CAMERA RECORDING STATISTICS
+==================================================
+
+Recording Time: 2025-06-20 17:20:33
+Duration: 53.4 seconds
+Resolution: 640x480
+Target FPS: 30
+Frames Processed: 0
+Obstacle Detections: 0
+

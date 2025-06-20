@@ -665,6 +665,31 @@ class AutonomousDrone:
         )
         self.waypoints.append(waypoint)
         logger.info(f"Added waypoint: {lat}, {lon}, {alt}")
+        
+    def test_camera_only(self):
+        """"Test camera without flight controller operations"""
+        
+        # intitialize camera
+        try:
+            self.camera = cv2.VideoCapture(0)
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.grid_manager.update_zone_types()
+            
+            print("Camera test mode - Press 'q' to exit")
+            while True:
+                obstacles, frame = self.detect_obstacles()
+                if frame is not None:
+                    processed_frame = self.grid_manager.draw_grid_overlay(frame, show_zones=True)
+                    cv2.imshow("Drone Vision", processed_frame)
+                    
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        
+        except Exception as e:
+            logger.error(f"Camera test failed: {e}")
+        finally:
+            cv2.destroyAllWindows
     
     def calculate_distance(self, pos1: Position, pos2: Position) -> float:
         """Calculate distance between two GPS positions"""
@@ -865,8 +890,8 @@ class AutonomousDrone:
                         self.video_writer.write(processed_frame)
                     
                     # Display frame (optional - remove in production)
-                    # cv2.imshow("Drone Vision", processed_frame)
-                    # cv2.waitKey(1)
+                    cv2.imshow("Drone Vision", processed_frame)
+                    cv2.waitKey(1)
                 
                 # Get danger cells from grid
                 danger_cells = self.grid_manager.get_danger_cells()
