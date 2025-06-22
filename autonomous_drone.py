@@ -401,7 +401,7 @@ class VisionDetector:
 class FlightController:
     """Interface for SpeedyBee F405 flight controller via MAVLink"""
     
-    def __init__(self, connection_string: str = "/dev/ttyACM0", baud_rate: int = 57600):
+    def __init__(self, connection_string: str = "/dev/ttyACM0", baud_rate: int = 115200):
         self.connection_string = connection_string
         self.baud_rate = baud_rate
         self.master = None
